@@ -563,6 +563,14 @@ Result ncsndPlayDirectSound(u32 chn, u32 priority, ncsndDirectSound* sound)
 	return NCSND_PlaySoundDirectly(chn, priority);
 }
 
+void ncsndInitializeSound(ncsndSound* sound)
+{
+	memset(sound, 0, sizeof(ncsndSound));
+
+	sound->volume = 1.f;
+	sound->pitch = 1.f;
+}
+
 Result ncsndPlaySound(u32 chn, ncsndSound* sound)
 {
 	if (!(ncsndChannels & BIT(chn)))

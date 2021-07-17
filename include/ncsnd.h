@@ -1,6 +1,6 @@
 /**
  * @file ncsnd.h
- * @brief CSND interface for the Nintendo 3DS
+ * @brief CSND interface for the Nintendo 3DS.
  */
 #pragma once
 
@@ -93,49 +93,20 @@ typedef struct
 
 extern u32 ncsndChannels;      ///< Bitmask of channels that are allowed for usage.
 
-/// Initializes CSND.
 Result ncsndInit(bool installAptHook);
 
-/// Exits CSND.
 void ncsndExit(void);
 
-/**
- * @brief Initializes a direct sound to the default values.
- * @param sound Pointer to a direct sound struct.
-*/
 void ncsndInitializeDirectSound(ncsndDirectSound* sound);
 
-/**
- * @brief Plays a direct sound.
- * @param sound Pointer to a direct sound struct.
- * @param chn Direct sound channel to use. Range [0, 3].
- * @param priority Direct sound priority, used if the channel is already playing. Smaller value -> Higher priority. Range [0, 31].
- * @param isVAddr Whether sound.channelData.sampleData hold virtual addresses (true) or physical addresses (false).
-*/
 Result ncsndPlayDirectSound(u32 chn, u32 priority, ncsndDirectSound* sound);
 
-/**
- * @brief Plays a sound.
- * @param chn Channel to play the sound on.
- * @param flags Flags containing information about the sound.
- * @param sampleRate Sample rate of the sound.
- * @param vol The volume, ranges from 0.0 to 1.0 included.
- * @param pan The pan, ranges from -1.0 to 1.0 included.
- * @param data0 First block of sound data.
- * @param data1 Second block of sound data. This is the block that will be looped over.
- * @param size Size of the sound data.
- *
- * In this implementation if the loop mode is used, data1 must be in the range [data0 ; data0 + size]. Sound will be played once from data0 to data0 + size and then loop between data1 and data0+size.
- */
+void ncsndInitializeSound(ncsndSound* sound);
+
 Result ncsndPlaySound(u32 chn, ncsndSound* sound);
 
 void ncsndPauseSound(u32 chn, bool pause);
 
 void ncsndStopSound(u32 chn);
 
-/**
- * @brief Gets whether a channel is playing.
- * @param channel Channel to check.
- * @param status Pointer to output the channel status to.
- */
 bool ncsndIsPlaying(u32 chn);
