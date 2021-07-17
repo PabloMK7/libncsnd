@@ -8,11 +8,9 @@
 #include <3ds/os.h>
 #include <3ds/ipc.h>
 #include <3ds/synchronization.h>
+#include <3ds/services/apt.h>
 
 #include <ncsnd.h>
-
-/// Maximum number of CSND channels.
-#define NCSND_NUM_CHANNELS 32
 
 /// Creates a CSND timer value from a sample rate.
 #define NCSND_TIMER(n) (0x3FEC3FC / ((u32)(n)))
@@ -56,11 +54,6 @@ enum
 enum
 {
 	NCSND_SOUND_LINEAR_INTERP = BIT(6),                           ///< Linear interpolation.
-	NCSND_SOUND_REPEAT = NCSND_SOUND_LOOPMODE(NCSND_LOOPMODE_NORMAL),    ///< Repeat the sound.
-	NCSND_SOUND_ONE_SHOT = NCSND_SOUND_LOOPMODE(NCSND_LOOPMODE_ONESHOT), ///< Play the sound once.
-	NCSND_SOUND_FORMAT_8BIT = NCSND_SOUND_FORMAT(NCSND_ENCODING_PCM8),   ///< PCM8
-	NCSND_SOUND_FORMAT_16BIT = NCSND_SOUND_FORMAT(NCSND_ENCODING_PCM16), ///< PCM16
-	NCSND_SOUND_FORMAT_ADPCM = NCSND_SOUND_FORMAT(NCSND_ENCODING_ADPCM), ///< ADPCM
 	NCSND_SOUND_ENABLE = BIT(14),                                 ///< Enable sound.
 };
 
@@ -103,7 +96,6 @@ typedef union
 	};
 } NCSND_ChnInfo;
 
-/// Represents the max volume for a direct sound.
 vu32* ncsndSharedMem;
 u32 ncsndSharedMemSize;
 u32 ncsndChannels;
@@ -113,10 +105,13 @@ Handle ncsndCSNDHandle;
 static Handle ncsndMutex;
 static Handle ncsndSharedMemBlock;
 
-static int ncsndRefCount;
+static int ncsndRefCount = 0;
 static u32 ncsndCmdBlockSize = 0x2000;
 static u32 ncsndCmdStartOff;
 static u32 ncsndCmdCurOff;
+
+static aptHookCookie ncsndCookie;
+static bool ncsndCookieHooked = false;
 
 static Result NCSND_Initialize(Handle* mutex, Handle* sharedMem, u32 sharedMemSize, u32* offsets)
 {
@@ -271,7 +266,7 @@ typedef enum
 	NCSNDCMD_SETENCODING = 0x2,
 	NCSNDCMD_SETLOOPBLOCK = 0x3,
 	NCSNDCMD_SETLOOPMODE = 0x4,
-	NCSNDCMD_SETPAUSE = 0x5,
+	NCSNDCMD_SETBIT7 = 0x5,
 	NCSNDCMD_SETINTERP = 0x6,
 	NCSNDCMD_SETDUTY = 0x7,
 	NCSNDCMD_SETTIMER = 0x8,
@@ -336,7 +331,7 @@ static Result NCSNDCmd_Execute(bool waitDone)
 	ncsndCmdStartOff = ncsndCmdCurOff;
 	if (R_FAILED(ret)) return ret;
 
-	while (waitDone && *flag == 0) svcSleepThread(100);
+	while (waitDone && *flag == 0);
 
 	return ret;
 }
@@ -357,14 +352,14 @@ static void NCSNDCmd_SetPlayState(u32 channel, u32 value)
 	cmdparams[1] = value;
 }*/
 
-/*static void NCSNDCmd_SetBlock(u32 channel, int block, u32 physaddr, u32 size)
+static void NCSNDCmd_SetBlock(u32 channel, int block, u32 physaddr, u32 size)
 {
 	u32* cmdparams = NCSNDCmd_Add(block ? NCSNDCMD_SETLOOPBLOCK : NCSNDCMD_SETBLOCK);
 
 	cmdparams[0] = channel & 0x1f;
 	cmdparams[1] = physaddr;
 	cmdparams[2] = size;
-}*/
+}
 
 /*static void NCSNDCmd_SetLooping(u32 channel, u32 value)
 {
@@ -374,13 +369,13 @@ static void NCSNDCmd_SetPlayState(u32 channel, u32 value)
 	cmdparams[1] = value;
 }*/
 
-static void NCSNDCmd_SetPause(u32 channel, bool pause)
+/*static void NCSNDCmd_SetBit7(u32 channel, bool set)
 {
-	u32* cmdparams = NCSNDCmd_Add(NCSNDCMD_SETPAUSE);
+	u32* cmdparams = NCSNDCmd_Add(NCSNDCMD_SETBIT7);
 
 	cmdparams[0] = channel & 0x1f;
-	cmdparams[1] = pause ? 1 : 0;
-}
+	cmdparams[1] = set ? 1 : 0;
+}*/
 
 /*static void NCSNDCmd_SetInterp(u32 channel, bool interp)
 {
@@ -398,22 +393,22 @@ static void NCSNDCmd_SetPause(u32 channel, bool pause)
 	cmdparams[1] = duty;
 }*/
 
-/*static void NCSNDCmd_SetTimer(u32 channel, u32 timer)
+static void NCSNDCmd_SetTimer(u32 channel, u32 timer)
 {
 	u32* cmdparams = NCSNDCmd_Add(NCSNDCMD_SETTIMER);
 
 	cmdparams[0] = channel & 0x1f;
 	cmdparams[1] = timer;
-}*/
+}
 
-/*static void NCSNDCmd_SetVol(u32 channel, u32 chnVolumes, u32 capVolumes)
+static void NCSNDCmd_SetVol(u32 channel, u32 chnVolumes, u32 capVolumes)
 {
 	u32* cmdparams = NCSNDCmd_Add(NCSNDCMD_SETVOL);
 
 	cmdparams[0] = channel & 0x1f;
 	cmdparams[1] = chnVolumes;
 	cmdparams[2] = capVolumes;
-}*/
+}
 
 static void NCSNDCmd_SetAdpcmState(u32 channel, int block, int sample, int index)
 {
@@ -468,6 +463,32 @@ static void NCSNDCmd_UpdateInfo()
 	NCSNDCmd_Add(NCSNDCMD_UPDATECHNINFO);
 }
 
+void ncsndNotifyAptEvent(APT_HookType event) 
+{
+	switch (event)
+    {
+    case APTHOOK_ONSUSPEND:
+    case APTHOOK_ONEXIT:
+    case APTHOOK_ONSLEEP:
+        for (int i = 0; i < NCSND_NUM_CHANNELS; i++) 
+		{
+			if (!(ncsndChannels & BIT(i)))
+				continue;
+			
+			NCSNDCmd_SetPlayState(i, 0);
+		}
+		NCSNDCmd_Execute(true);
+        break;
+    default:
+        break;
+    }
+}
+
+static void ncsndAptHook(APT_HookType hook, void* param)
+{
+    ncsndNotifyAptEvent(hook);
+}
+
 Result ncsndInit(bool doAptHook)
 {
 	Result ret=0;
@@ -500,8 +521,15 @@ Result ncsndInit(bool doAptHook)
 	memset((void*)ncsndSharedMem, 0, ncsndSharedMemSize);
 
 	ret = NCSND_AcquireSoundChannels(&ncsndChannels);
-	if (R_SUCCEEDED(ret)) return 0;
+	if (R_FAILED(ret)) goto cleanup2;
 
+    if (!ncsndCookieHooked && doAptHook)
+    {
+        aptHook(&ncsndCookie, ncsndAptHook, NULL);
+        ncsndCookieHooked = true;
+    }
+
+	return ret;
 cleanup2:
 	svcCloseHandle(ncsndSharedMemBlock);
 	if(ncsndSharedMem != NULL)
@@ -533,9 +561,15 @@ void ncsndExit(void)
 		mappableFree((void*) ncsndSharedMem);
 		ncsndSharedMem = NULL;
 	}
+
+	if (ncsndCookieHooked)
+	{
+		aptUnhook(&ncsndCookie);
+		ncsndCookieHooked = false;
+	}
 }
 
-void csndInitializeDirectSound(ncsndDirectSound* sound)
+void ncsndInitializeDirectSound(ncsndDirectSound* sound)
 {
 	memset(sound, 0, sizeof(ncsndDirectSound));
 
@@ -595,12 +629,18 @@ Result ncsndPlaySound(u32 chn, ncsndSound* sound)
 	if (timer < 0x0042) timer = 0x0042;
 	else if (timer > 0xFFFF) timer = 0xFFFF;
 
-	flags |= (sound->loopPlayback ? NCSND_SOUND_LOOPMODE(NCSND_LOOPMODE_MANUAL) : NCSND_SOUND_LOOPMODE(NCSND_LOOPMODE_ONESHOT));
+	flags |= (sound->loopPlayback ? NCSND_SOUND_LOOPMODE(NCSND_LOOPMODE_NORMAL) : NCSND_SOUND_LOOPMODE(NCSND_LOOPMODE_ONESHOT));
 	flags |= (sound->linearInterpolation ? NCSND_SOUND_LINEAR_INTERP : 0);
-	flags |= NCSND_SOUND_ENABLE | NCSND_SOUND_CHANNEL(chn) | (timer << 16);
+	flags |= NCSND_SOUND_ENABLE | NCSND_SOUND_CHANNEL(chn) | NCSND_SOUND_FORMAT(sound->encoding) | (timer << 16);
 
 	u32 volumes = NCSND_VOL(sound->volume, sound->pan);
 	NCSNDCmd_SetChnParams(flags, (u32)sampleData, (u32)loopSampleData, sound->totalSizeBytes, volumes, volumes);
+
+	if (sound->loopPlayback && loopSampleData > sampleData)
+	{
+		// Now that the first block is playing, configure the size of the subsequent blocks
+		NCSNDCmd_SetBlock(chn, 1, (u32)loopSampleData, sound->totalSizeBytes - (loopSampleData - sampleData));
+	}
 
 	return NCSNDCmd_Execute(true);
 }
@@ -617,27 +657,45 @@ static Result NCSND_GetState(u32 channel, NCSND_ChnInfo* out)
 
 	NCSNDCmd_UpdateInfo();
 
-	if (R_FAILED(ret = NCSNDCmd_Execute(true)))return ret;
+	if (R_FAILED(ret = NCSNDCmd_Execute(true))) return ret;
 
 	memcpy(out, (const void*)&ncsndSharedMem[(ncsndOffsets[1] + channel*0xc) >> 2], 0xc);
 
 	return 0;
 }
 
-void ncsndPauseChannel(u32 chn, bool pause)
+void ncsndSetVolume(u32 chn, float volume, float pan)
 {
-	NCSNDCmd_SetPause(chn, pause);
+	u32 volumes = NCSND_VOL(volume, pan);
+
+	NCSNDCmd_SetVol(chn, volumes, volumes);
+	NCSNDCmd_Execute(true);
+}
+
+void ncsndSetRate(u32 chn, u32 sampleRate, float pitch)
+{
+	u32 timer = NCSND_TIMER((u32)(sampleRate * pitch));
+	if (timer < 0x0042) timer = 0x0042;
+	else if (timer > 0xFFFF) timer = 0xFFFF;
+
+	NCSNDCmd_SetTimer(chn, timer);
 	NCSNDCmd_Execute(true);
 }
 
 void ncsndStopSound(u32 chn)
 {
+	if (!(ncsndChannels & BIT(chn)))
+		return;
+	
 	NCSNDCmd_SetPlayState(chn, 0);
 	NCSNDCmd_Execute(true);
 }
 
 bool ncsndIsPlaying(u32 chn)
 {
+	if (!(ncsndChannels & BIT(chn)))
+		return false;
+	
 	NCSND_ChnInfo entry;
 
 	NCSND_GetState(chn, &entry);
