@@ -1,7 +1,5 @@
 # libncsnd
-
-# Description
-The goal of this library is to provide an interface for accessing the **CSND** service on the Nintendo 3DS. This gives a layer of abstraction for playing sound using such services, useful in the case the main audio playback service (**DSP**) is not avaibale. For any uses other than audio playback, check the **CSND** implementation in *libctru*.
+Library that provides an interface for accessing the **CSND** audio service on the Nintendo 3DS. This gives a layer of abstraction for playing sound using such service, which useful in the case the main audio playback service (**DSP**) is not avaibale. For any uses other than audio playback, check the **CSND** implementation in *libctru*.
 
 # Installation and Usage
 1. Make sure you have [devkitpro](https://devkitpro.org/wiki/Getting_Started) installed and working.
