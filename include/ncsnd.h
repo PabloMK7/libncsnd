@@ -116,6 +116,14 @@ extern u32 ncsndChannels;
 Result ncsndInit(bool installAptHook);
 
 /**
+ * @brief Notifies an APT event, only needed if false was passed to ncsndInit
+ * @param event APT event to notify, check the APT_HookType enum.
+ * 
+ * APT notification manual handling is needed for services, applets or plugins.
+*/
+void ncsndNotifyAptEvent(APT_HookType event);
+
+/**
  * @brief Terminates the ncsnd interface, including CSND.
 */
 void ncsndExit(void);
