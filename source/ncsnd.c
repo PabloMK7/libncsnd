@@ -465,6 +465,7 @@ static void NCSNDCmd_UpdateInfo()
 
 void ncsndNotifyAptEvent(APT_HookType event) 
 {
+	if (!ncsndRefCount) return;
 	switch (event)
     {
     case APTHOOK_ONSUSPEND:
